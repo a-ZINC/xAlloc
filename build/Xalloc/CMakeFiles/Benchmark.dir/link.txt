@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/Benchmark.dir/link.d CMakeFiles/Benchmark.dir/test/Benchmark.cpp.o -o Benchmark  libXallocLib.a

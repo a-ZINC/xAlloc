@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/mnt/c/Users/ajink/source/repos/Xalloc/build/cmake_install.cmake",
+		"/mnt/c/Users/ajink/source/repos/Xalloc/build/Xalloc/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

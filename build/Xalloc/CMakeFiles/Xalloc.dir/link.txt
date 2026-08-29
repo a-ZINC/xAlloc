@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/Xalloc.dir/link.d CMakeFiles/Xalloc.dir/Xalloc.cpp.o CMakeFiles/Xalloc.dir/src/MonotonicBrk.cpp.o CMakeFiles/Xalloc.dir/test/Benchmark.cpp.o -o Xalloc
