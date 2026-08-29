@@ -116,6 +116,8 @@ public:
 };
 
 int main() {
+	xalloc::monotonicBrk::test_metadata(23);
+
 	MonotonicSbrkBench mbb;
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
 
