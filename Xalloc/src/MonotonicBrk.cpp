@@ -8,6 +8,8 @@ namespace xalloc {
 		constexpr uint64_t ALLOC_BIT = 0x1;
 		constexpr uint64_t SIZE_MASK = ~ALLOC_BIT;
 		size_t ALIGNED_SIZE = 8; //can change according to your need for eliminating SIGBUS error etc.
+		Header* freelist = nullptr;
+		constexpr size_t MIN_BLOCK_SIZE = HEADER_SIZE + sizeof(void*);
 
 		Header* header_of(void* mem) {
 			return reinterpret_cast<Header*>(reinterpret_cast<char*>(mem) - HEADER_SIZE);
@@ -21,10 +23,45 @@ namespace xalloc {
 			return (header & SIZE_MASK);
 		}
 
+		void* payload_of(Header* header) {
+			return reinterpret_cast<char*>(header) + HEADER_SIZE;
+		}
+
+		static Header*& free_next_payload(Header* header) {
+			return *reinterpret_cast<Header**>(payload_of(header));
+		}
+
+		void free_list_push(Header* header) {
+			free_next_payload(header) = freelist;
+			freelist = header;
+		}
+
+		Header* free_list_find_remove(size_t size) {
+			Header** link = &freelist;
+			Header* curr = freelist;
+
+			while (curr) {
+				if (size <= block_size(*curr)) {
+					*link = free_next_payload(curr);
+					return curr;
+				}
+				link = &free_next_payload(curr);
+				curr = free_next_payload(curr);
+			}
+			return nullptr;
+		}
+
 		void* alloc(size_t size) {
 			if (size == 0) return nullptr;
 			size_t total = size + HEADER_SIZE;
 			total = (total + (ALIGNED_SIZE - 1)) & ~(ALIGNED_SIZE - 1);
+			if (total < MIN_BLOCK_SIZE) total = MIN_BLOCK_SIZE;
+
+			Header* h = free_list_find_remove(total);
+			if (h) {
+				*h = block_size(*h) | ALLOC_BIT;
+				return payload_of(h);
+			}
 			void* mem = sbrk(static_cast<intptr_t>(total));
 			if (mem == (void*)-1) return nullptr;
 			Header* header = reinterpret_cast<Header*>(mem);
@@ -38,6 +75,7 @@ namespace xalloc {
 			Header* header = header_of(mem);
 			assert(is_alloc(*header) && "double free or invalid pointer detected!");
 			*header = block_size(*header);
+			free_list_push(header);
 		}
 
 		void set_aligned(size_t size) {
@@ -46,6 +84,7 @@ namespace xalloc {
 		}
 
 		void test_metadata(size_t size) {
+			//test 1: metadata test
 			void* memory = alloc(size);
 			Header* header = header_of(memory);
 			assert(is_alloc(*header) && "Bro not allocated!");
@@ -54,6 +93,12 @@ namespace xalloc {
 			free(memory);
 			assert(!is_alloc(*header) && "bro free didnt occur");
 			std::cout << "metadata test passed" << std::endl;
+
+			// test 2: reuse freelist test
+			void* reuse = alloc(size);
+			alloc(reuse == memory && "freelist reuse failed!");
+			free(reuse);
+			std::cout << "freelist test passed" << std::endl;
 		}
 	}
 }
