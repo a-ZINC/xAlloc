@@ -10,6 +10,8 @@ namespace xalloc {
 		size_t ALIGNED_SIZE = 8; //can change according to your need for eliminating SIGBUS error etc.
 		Header* freelist = nullptr;
 		constexpr size_t MIN_BLOCK_SIZE = HEADER_SIZE + sizeof(void*);
+		uint64_t g_split_count = 0;
+		uint64_t g_brk_count = 0;
 
 		Header* header_of(void* mem) {
 			return reinterpret_cast<Header*>(reinterpret_cast<char*>(mem) - HEADER_SIZE);
@@ -59,13 +61,25 @@ namespace xalloc {
 
 			Header* h = free_list_find_remove(total);
 			if (h) {
-				*h = block_size(*h) | ALLOC_BIT;
+				uint64_t block_length = block_size(*h);
+				uint64_t left_over_size = block_length - total;
+				if (left_over_size >= MIN_BLOCK_SIZE) {
+					Header* leftOverHeader = reinterpret_cast<Header*>(reinterpret_cast<char*>(h) + total);
+					*h = static_cast<uint64_t>(total) | ALLOC_BIT;
+					*leftOverHeader = left_over_size;
+					free_list_push(leftOverHeader);
+					g_split_count++;
+				}
+				else {
+					*h = block_size(*h) | ALLOC_BIT;
+				}
 				return payload_of(h);
 			}
 			void* mem = sbrk(static_cast<intptr_t>(total));
 			if (mem == (void*)-1) return nullptr;
 			Header* header = reinterpret_cast<Header*>(mem);
 			*header = total | ALLOC_BIT;
+			g_brk_count++;
 
 			return reinterpret_cast<char*>(mem) + HEADER_SIZE;
 		}
@@ -96,9 +110,49 @@ namespace xalloc {
 
 			// test 2: reuse freelist test
 			void* reuse = alloc(size);
-			alloc(reuse == memory && "freelist reuse failed!");
+			assert(reuse == memory && "freelist reuse failed!");
 			free(reuse);
 			std::cout << "freelist test passed" << std::endl;
+
+			// test3: split use(atleast pass 32bytes for it to pass)
+			assert(size >= 32 && "split will fail! atleast give 32 byte");
+			void* memConsume = alloc(size/2);
+			uint64_t block1size = block_size(*header_of(memConsume));
+			std::cout << "first block: " << block1size << ", brk count:" << g_brk_count << ", split count: " << g_split_count << std::endl;
+			assert((block1size > size / 2) && g_split_count <= 1 && "size allocated is much bigger!");
+			void* memSplit = alloc(size / 4);
+			uint64_t splitsize = block_size(*header_of(memSplit));
+			std::cout << "split block: " << splitsize << ", split count" << g_split_count << std::endl;
+			assert((splitsize > size / 4) && g_brk_count <= 1 && "size allocated is much bigger!");
+
+			free(memSplit);
+			std::cout << "Successfully freed memSplit" << std::endl;
+			free(memConsume);
+			std::cout << "Successfully freed memConsume" << std::endl;
+
+			freelist = nullptr;
+			g_brk_count = 0;
+			g_split_count = 0;
+		}
+
+		void stats_external_fragmentation(long& count, double& avg_size) {
+			Header* h = freelist;
+			uint64_t total = 0;
+			while (h) {
+				count++;
+				total += block_size(*h);
+				h = free_next_payload(h);
+			}
+
+			avg_size = total / count;
+		}
+
+		uint64_t get_brk_count() {
+			return g_brk_count;
+		}
+
+		uint64_t get_split_count() {
+			return g_split_count;
 		}
 	}
 }

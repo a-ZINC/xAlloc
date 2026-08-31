@@ -7,6 +7,7 @@
 #include <sstream>
 #include <chrono>
 #include "../include/Xalloc.h"
+#include <unistd.h>
 
 struct Op {
 	bool is_alloc;
@@ -79,8 +80,10 @@ public:
 	}
 
 	template <typename Allocfn, typename FreeFn>
-	void run_workload(const char* label, std::vector<Op> ops, Allocfn allocfn, FreeFn freefn) {
+	void run_workload(const char* label, std::vector<Op> ops, Allocfn allocfn, FreeFn freefn, bool custom) {
 		std::vector<void*> live(ops.size() - 1, nullptr);
+		long long total_size_requested = 0;
+		void* before_heap = sbrk(0);
 		long before_rss = current_rss_kb();
 		auto before_time = std::chrono::high_resolution_clock::now();
 
@@ -90,6 +93,7 @@ public:
 				void* mem = allocfn(op.size);
 				if (mem) std::memset(mem, 0xFF, op.size);
 				live[counter] = mem;
+				total_size_requested += op.size;
 				counter++;
 			}
 			else {
@@ -103,25 +107,44 @@ public:
 		auto after_time = std::chrono::high_resolution_clock::now();
 		long after_rss = current_rss_kb();
 		long peak_rss = peak_rss_kb();
+		void* after_heap = sbrk(0);
 		auto time_dur = std::chrono::duration<double, std::milli>(after_time - before_time).count();
 
+		long freelistcount = 0; double avg_size = .0;
+		xalloc::monotonicBrk::stats_external_fragmentation(freelistcount, avg_size);
+		long long heap_growth = ((char*)after_heap - (char*)before_heap) / (1<<20);
+		total_size_requested = total_size_requested / (1<<20);
+		double rhr = (double)total_size_requested / (double)heap_growth;
+
 		std::cout << std::format("===={}====\n", label);
-		std::cout << std::format("   Time:          {}ms\n", time_dur);
-		std::cout << std::format("   Throughput:    {}op/sec\n", (double)ops.size() / (time_dur / 1000));
-		std::cout << std::format("   Before RSS:    {}kb\n", before_rss);
-		std::cout << std::format("   After RSS:     {}kb\n", after_rss);
-		std::cout << std::format("   Peak RSS:      {}kb\n", peak_rss);
-		std::cout << std::format("   RSS Growth:    {}mb\n", (after_rss - before_rss) / 1024);
+		std::cout << std::format("   Time:            {}ms\n", time_dur);
+		std::cout << std::format("   Throughput:      {}op/sec\n", (double)ops.size() / (time_dur / 1000));
+		std::cout << std::format("   Before RSS:      {}kb\n", before_rss);
+		std::cout << std::format("   After RSS:       {}kb\n", after_rss);
+		std::cout << std::format("   Peak RSS:        {}kb\n", peak_rss);
+		std::cout << std::format("   RSS Growth:      {}mb\n", (after_rss - before_rss) / 1024);
+
+		if (custom) {
+			std::cout << std::format("   [{}]: \n", "EXTRA");
+			std::cout << std::format("        Heap growth:          {}mb\n", heap_growth);
+			std::cout << std::format("        freelist Count:       {}\n", freelistcount);
+			std::cout << std::format("        list avg size:        {}byte\n", avg_size);
+			std::cout << std::format("        total request:        {}mb\n", total_size_requested);
+			std::cout << std::format("        request/heap ratio:   {}\n", rhr);
+			std::cout << std::format("        sbrk count:           {}\n", xalloc::monotonicBrk::get_brk_count());
+			std::cout << std::format("        split count:           {}\n", xalloc::monotonicBrk::get_split_count());
+		}
+
 	}
 };
 
 int main() {
-	xalloc::monotonicBrk::test_metadata(23);
+	xalloc::monotonicBrk::test_metadata(32);
 
 	MonotonicSbrkBench mbb;
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
 
-	mbb.run_workload("Monotonic sbrk alloc", ops, xalloc::monotonicBrk::alloc, xalloc::monotonicBrk::free);
-	mbb.run_workload("Standard malloc", ops, [](size_t size) {return std::malloc(size);}, [](void* mem) {return std::free(mem);});
+	mbb.run_workload("Monotonic sbrk alloc", ops, xalloc::monotonicBrk::alloc, xalloc::monotonicBrk::free, true);
+	mbb.run_workload("Standard malloc", ops, [](size_t size) {return std::malloc(size);}, [](void* mem) {return std::free(mem);}, false);
 	return 0;
 }
