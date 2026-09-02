@@ -133,13 +133,14 @@ public:
 			std::cout << std::format("        request/heap ratio:   {}\n", rhr);
 			std::cout << std::format("        sbrk count:           {}\n", xalloc::monotonicBrk::get_brk_count());
 			std::cout << std::format("        split count:           {}\n", xalloc::monotonicBrk::get_split_count());
+			std::cout << std::format("        coalesce count:        {}\n", xalloc::monotonicBrk::get_coalesce_count());
 		}
 
 	}
 };
 
 int main() {
-	xalloc::monotonicBrk::test_metadata(32);
+	xalloc::monotonicBrk::test_metadata(64);
 
 	MonotonicSbrkBench mbb;
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
