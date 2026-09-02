@@ -13,7 +13,7 @@ namespace xalloc {
 
 		// OPTIONAL:
 		uint64_t get_brk_count();
-
+		uint64_t get_coalesce_count();
 		uint64_t get_split_count();
 
 		// TODO: remove once testing done
