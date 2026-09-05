@@ -137,12 +137,32 @@ public:
 		}
 
 	}
+
+	void test_alignment(size_t size) {
+		xalloc::monotonicBrk::set_aligned(size);
+		int misaligned_count = 0;
+		std::mt19937_64 rng(SEED);
+		std::uniform_int_distribution<size_t> alloc_size(1, 4096);
+		int total_itr = 5'000;
+
+		for (int i = 0; i < total_itr; i++) {
+			size_t size = alloc_size(rng);
+			void* mem = xalloc::monotonicBrk::alloc(size);
+			if (reinterpret_cast<uintptr_t>(mem) % 16 != 0) {  // for 16-byte alignment check
+				misaligned_count++;
+			}
+			xalloc::monotonicBrk::free(mem);
+		}
+
+		std::cout << std::format("Alignment Test: {} misaligned allocations out of {} ({}%)\n", misaligned_count, total_itr, (double)misaligned_count / total_itr * 100);
+	}
 };
 
 int main() {
-	xalloc::monotonicBrk::test_metadata(64);
+	xalloc::monotonicBrk::test_metadata(128);
 
 	MonotonicSbrkBench mbb;
+	mbb.test_alignment(8);
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
 
 	mbb.run_workload("Monotonic sbrk alloc", ops, xalloc::monotonicBrk::alloc, xalloc::monotonicBrk::free, true);

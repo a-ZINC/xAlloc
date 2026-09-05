@@ -4,13 +4,13 @@
 namespace xalloc {
 	namespace monotonicBrk {
 		using Header = uint64_t;
-		constexpr size_t HEADER_SIZE = sizeof(Header);
+		size_t ALIGNED_SIZE = 16; //can change according to your need for eliminating SIGBUS, SIGSEV error etc.
+		size_t HEADER_SIZE = ALIGNED_SIZE;
 		constexpr size_t FOOTER_SIZE = sizeof(Header);
 		constexpr uint64_t ALLOC_BIT = 0x1;
 		constexpr uint64_t SIZE_MASK = ~ALLOC_BIT;
-		size_t ALIGNED_SIZE = 8; //can change according to your need for eliminating SIGBUS error etc.
 		Header* freelist = nullptr;
-		constexpr size_t MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
+		size_t MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
 		uint64_t g_split_count = 0;
 		uint64_t g_brk_count = 0;
 		void* g_brk_start = nullptr;
@@ -126,14 +126,15 @@ namespace xalloc {
 				g_coalesce_count++;
 			}
 
-			uint64_t prev__block_size = block_size(*reinterpret_cast<Header*>(reinterpret_cast<char*>(header) - FOOTER_SIZE));
-			Header* prev_block_header = reinterpret_cast<Header*>(reinterpret_cast<char*>(header) - prev__block_size);
-			char* prev_block_start = reinterpret_cast<char*>(header) - prev__block_size;
-			if (prev_block_start >= static_cast<char*>(g_brk_start) && !is_alloc(*prev_block_header)) {
-				free_list_remove(prev_block_header);
-				size += prev__block_size;
-				base = prev_block_start;
-				g_coalesce_count++;
+			if (base > static_cast<char*>(g_brk_start)) {  // check BEFORE reading anything
+				uint64_t prev_size = block_size(*reinterpret_cast<Header*>(base - FOOTER_SIZE));
+				Header* prev_header = reinterpret_cast<Header*>(base - prev_size);
+				if (!is_alloc(*prev_header)) {
+					free_list_remove(prev_header);
+					base = reinterpret_cast<char*>(prev_header);
+					size += prev_size;
+					g_coalesce_count++;
+				}
 			}
 
 
@@ -143,8 +144,10 @@ namespace xalloc {
 		}
 
 		void set_aligned(size_t size) {
-			assert(size > 0 && size % 8 == 0 && "Keep alignment x8, to minimize SIGBUS error!");
+			assert(size > 0 && (size & (size - 1)) == 0 && "alignment must be a power of two");
 			ALIGNED_SIZE = size;
+			HEADER_SIZE = ALIGNED_SIZE;
+			MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
 		}
 
 		void reset_allocator() {
@@ -207,6 +210,7 @@ namespace xalloc {
 			free(block3); // free block3, freelist = [74]
 			assert(g_split_count > 0 && "split did not occur3!");
 			assert(g_coalesce_count > 1 && "coalesce did occur3!");
+
 		}
 
 		void stats_external_fragmentation(long& count, double& avg_size) {
