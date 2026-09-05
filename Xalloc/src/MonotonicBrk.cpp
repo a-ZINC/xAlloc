@@ -145,6 +145,7 @@ namespace xalloc {
 
 		void set_aligned(size_t size) {
 			assert(size > 0 && (size & (size - 1)) == 0 && "alignment must be a power of two");
+			assert(g_brk_start > 0 && "set_aligned must be called before any allocation");
 			ALIGNED_SIZE = size;
 			HEADER_SIZE = ALIGNED_SIZE;
 			MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
