@@ -1,0 +1,2 @@
+/usr/bin/ar qc libXallocLib.a CMakeFiles/XallocLib.dir/src/MonotonicBrk.cpp.o
+/usr/bin/ranlib libXallocLib.a

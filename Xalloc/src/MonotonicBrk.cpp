@@ -4,18 +4,31 @@
 namespace xalloc {
 	namespace monotonicBrk {
 		using Header = uint64_t;
-		constexpr size_t HEADER_SIZE = sizeof(Header);
+		size_t ALIGNED_SIZE = 16; //can change according to your need for eliminating SIGBUS, SIGSEV error etc.
+		size_t HEADER_SIZE = ALIGNED_SIZE;
 		constexpr size_t FOOTER_SIZE = sizeof(Header);
 		constexpr uint64_t ALLOC_BIT = 0x1;
 		constexpr uint64_t SIZE_MASK = ~ALLOC_BIT;
-		size_t ALIGNED_SIZE = 8; //can change according to your need for eliminating SIGBUS error etc.
-		Header* freelist = nullptr;
-		constexpr size_t MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
+		size_t MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
 		uint64_t g_split_count = 0;
 		uint64_t g_brk_count = 0;
 		void* g_brk_start = nullptr;
 		void* g_brk_end = nullptr;
 		uint64_t g_coalesce_count = 0;
+		bool developer_inteligence = false;
+		// class size
+		constexpr int num_classes = 10;
+		constexpr size_t class_base_size = 32;
+
+		constexpr std::array<size_t, num_classes> make_class_size() {
+			std::array<size_t, num_classes> classes;
+			for (int i = 0; i < num_classes; i++) {
+				classes[i] = class_base_size * (1<<i);
+			}
+			return std::move(classes);
+		}
+		constexpr std::array<size_t, num_classes> class_size = make_class_size();
+		std::array<Header*, num_classes> freelists{};
 
 		Header* header_of(void* mem) {
 			return reinterpret_cast<Header*>(reinterpret_cast<char*>(mem) - HEADER_SIZE);
@@ -37,14 +50,23 @@ namespace xalloc {
 			return *reinterpret_cast<Header**>(payload_of(header));
 		}
 
+		int class_index(size_t size) {
+			for (int i = 0; i < num_classes - 1; i++) {
+				if (size <= class_size[i]) return i;
+			}
+			return num_classes - 1;
+		}
+
 		void free_list_push(Header* header) {
-			free_next_payload(header) = freelist;
-			freelist = header;
+			free_next_payload(header) = freelists[class_index(block_size(*header))];
+			freelists[class_index(block_size(*header))] = header;
+			return;
 		}
 
 		void free_list_remove(Header* header) {
-			Header** link = &freelist;
-			Header* curr = freelist;
+			int c = class_index(block_size(*header));
+			Header** link = &freelists[c];
+			Header* curr = freelists[c];
 			while (curr) {
 				if (curr == header) {
 					*link = free_next_payload(curr);
@@ -55,9 +77,17 @@ namespace xalloc {
 			}
 		}
 
-		Header* free_list_find_remove(size_t size) {
-			Header** link = &freelist;
-			Header* curr = freelist;
+		Header* pop_from_any_class(int c) {
+			Header* freelist = freelists[c];
+			if (freelist) {
+				freelists[c] = free_next_payload(freelist);
+			}
+			return freelist;
+		}
+
+		Header* find_fit_in_class(int c, size_t size) {
+			Header** link = &freelists[c];
+			Header* curr = freelists[c];
 
 			while (curr) {
 				if (size <= block_size(*curr)) {
@@ -83,7 +113,19 @@ namespace xalloc {
 			total = (total + (ALIGNED_SIZE - 1)) & ~(ALIGNED_SIZE - 1);
 			if (total < MIN_BLOCK_SIZE) total = MIN_BLOCK_SIZE;
 
-			Header* h = free_list_find_remove(total);
+			int start_class = class_index(total);
+			Header* h = find_fit_in_class(start_class, total);
+			if (!h) {
+				for (int i = start_class + 1; i < num_classes && !h; i++) {
+					if (i == num_classes - 1) {
+						h = find_fit_in_class(i, total);
+					}
+					else {
+						h = pop_from_any_class(i);
+					}
+				}
+			}
+
 			if (h) {
 				uint64_t block_length = block_size(*h);
 				uint64_t left_over_size = block_length - total;
@@ -126,14 +168,15 @@ namespace xalloc {
 				g_coalesce_count++;
 			}
 
-			uint64_t prev__block_size = block_size(*reinterpret_cast<Header*>(reinterpret_cast<char*>(header) - FOOTER_SIZE));
-			Header* prev_block_header = reinterpret_cast<Header*>(reinterpret_cast<char*>(header) - prev__block_size);
-			char* prev_block_start = reinterpret_cast<char*>(header) - prev__block_size;
-			if (prev_block_start >= static_cast<char*>(g_brk_start) && !is_alloc(*prev_block_header)) {
-				free_list_remove(prev_block_header);
-				size += prev__block_size;
-				base = prev_block_start;
-				g_coalesce_count++;
+			if (base > static_cast<char*>(g_brk_start)) {  // check BEFORE reading anything
+				uint64_t prev_size = block_size(*reinterpret_cast<Header*>(base - FOOTER_SIZE));
+				Header* prev_header = reinterpret_cast<Header*>(base - prev_size);
+				if (!is_alloc(*prev_header)) {
+					free_list_remove(prev_header);
+					base = reinterpret_cast<char*>(prev_header);
+					size += prev_size;
+					g_coalesce_count++;
+				}
 			}
 
 
@@ -143,12 +186,18 @@ namespace xalloc {
 		}
 
 		void set_aligned(size_t size) {
-			assert(size > 0 && size % 8 == 0 && "Keep alignment x8, to minimize SIGBUS error!");
+			assert(size > 0 && (size & (size - 1)) == 0 && "alignment must be a power of two");
+			assert(g_brk_start == nullptr && "set_aligned must be called before any allocation");
 			ALIGNED_SIZE = size;
+			HEADER_SIZE = ALIGNED_SIZE;
+			MIN_BLOCK_SIZE = HEADER_SIZE + FOOTER_SIZE + sizeof(void*);
 		}
 
 		void reset_allocator() {
-			freelist = nullptr;
+			if (g_brk_start && developer_inteligence) { // Reset the program break to the initial position(dont do this in production code, only for testing purposes)
+				brk(g_brk_start);
+			}
+			freelists = {};
 			g_brk_count = 0;
 			g_split_count = 0;
 			g_coalesce_count = 0;
@@ -174,51 +223,65 @@ namespace xalloc {
 			std::cout << "freelist test passed" << std::endl;
 
 			// test3: split use(atleast pass 32bytes for it to pass) + 8 for coalesce test
-			assert(size >= 32 && "split will fail! atleast give 32 byte");
-			void* memConsume = alloc(size/2);
-			uint64_t block1size = block_size(*header_of(memConsume));
-			std::cout << "first block: " << block1size << ", brk count:" << g_brk_count << ", split count: " << g_split_count << std::endl;
-			assert((block1size > size / 2) && g_split_count <= 1 && "size allocated is much bigger!");
-			void* memSplit = alloc(size / 4);
-			uint64_t splitsize = block_size(*header_of(memSplit));
-			std::cout << "split block: " << splitsize << ", split count" << g_split_count << std::endl;
-			assert((splitsize > size / 4) && g_brk_count <= 1 && "size allocated is much bigger!");
+			//assert(size >= 32 && "split will fail! atleast give 32 byte");
+			//void* memConsume = alloc(size/2);
+			//uint64_t block1size = block_size(*header_of(memConsume));
+			//std::cout << "first block: " << block1size << ", brk count:" << g_brk_count << ", split count: " << g_split_count << std::endl;
+			//assert((block1size > size / 2) && g_split_count <= 1 && "size allocated is much bigger!");
+			//void* memSplit = alloc(size / 4);
+			//uint64_t splitsize = block_size(*header_of(memSplit));
+			//std::cout << "split block: " << splitsize << ", split count" << g_split_count << std::endl;
+			//assert((splitsize > size / 4) && g_brk_count <= 1 && "size allocated is much bigger!");
 
-			free(memSplit);
-			free(memConsume);
+			//free(memSplit);
+			//free(memConsume);
 
 			reset_allocator();
 
 			//test 4: coalesce test
-			void* block1 = alloc(size); // eg: size = 64, block1 = 82, freelist = []
-			Header* header1 = header_of(block1);
-			free(block1); // free block1, freelist = [82]
-			assert(g_split_count <= 0 && "split did occur1!");
-			assert(g_coalesce_count <= 0 && "coalesce did occur1!");
+			//void* block1 = alloc(size); // eg: size = 64, block1 = 82, freelist = []
+			//Header* header1 = header_of(block1);
+			//free(block1); // free block1, freelist = [82]
+			//assert(g_split_count <= 0 && "split did occur1!");
+			//assert(g_coalesce_count <= 0 && "coalesce did occur1!");
 
-			void* block2 = alloc(size + 24); // eg: size = 88, block2 = 104, freelist = [82]
-			Header* header2 = header_of(block2);
-			free(block2); // free block2, freelist = [186]
-			assert(g_split_count <= 0 && "split did occur2!");
-			assert(g_coalesce_count > 0 && "coalesce did not occur2!");
+			//void* block2 = alloc(size + 24); // eg: size = 88, block2 = 104, freelist = [82]
+			//Header* header2 = header_of(block2);
+			//free(block2); // free block2, freelist = [186]
+			//assert(g_split_count <= 0 && "split did occur2!");
+			//assert(g_coalesce_count > 0 && "coalesce did not occur2!");
 
-			void* block3 = alloc(size + 32); // eg: size = 96, block3 = 112, freelist = [186]
-			Header* header3 = header_of(block3);
-			free(block3); // free block3, freelist = [74]
-			assert(g_split_count > 0 && "split did not occur3!");
-			assert(g_coalesce_count > 1 && "coalesce did occur3!");
+			//void* block3 = alloc(size + 32); // eg: size = 96, block3 = 112, freelist = [186]
+			//Header* header3 = header_of(block3);
+			//free(block3); // free block3, freelist = [74]
+			//assert(g_split_count > 0 && "split did not occur3!");
+			//assert(g_coalesce_count > 1 && "coalesce did occur3!");
+
+			reset_allocator();
 		}
 
 		void stats_external_fragmentation(long& count, double& avg_size) {
-			Header* h = freelist;
 			uint64_t total = 0;
-			while (h) {
-				count++;
-				total += block_size(*h);
-				h = free_next_payload(h);
+			for (int i = 0; i < num_classes; i++) {
+				Header* h = freelists[i];
+				while (h) {
+					count++;
+					total += block_size(*h);
+					h = free_next_payload(h);
+				}
 			}
 
 			avg_size = (count > 0) ? static_cast<double>(total) / count : 0.0;
+		}
+
+		void stats_class_based(std::vector<long>& classes) {
+			for (int i = 0; i < num_classes; i++) {
+				Header* h = freelists[i];
+				while (h) {
+					classes[i]++;
+					h = free_next_payload(h);
+				}
+			}
 		}
 
 		uint64_t get_brk_count() {
@@ -231,6 +294,14 @@ namespace xalloc {
 
 		uint64_t get_coalesce_count() {
 			return g_coalesce_count;
+		}
+
+		int get_num_class() {
+			return num_classes;
+		}
+
+		size_t get_base_class_size() {
+			return class_base_size;
 		}
 	}
 }

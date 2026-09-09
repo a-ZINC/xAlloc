@@ -116,6 +116,10 @@ public:
 		total_size_requested = total_size_requested / (1<<20);
 		double rhr = (double)total_size_requested / (double)heap_growth;
 
+		std::vector<long> classes(xalloc::monotonicBrk::get_num_class(), 0);
+		xalloc::monotonicBrk::stats_class_based(classes);
+		size_t base_class_size = xalloc::monotonicBrk::get_base_class_size();
+
 		std::cout << std::format("===={}====\n", label);
 		std::cout << std::format("   Time:            {}ms\n", time_dur);
 		std::cout << std::format("   Throughput:      {}op/sec\n", (double)ops.size() / (time_dur / 1000));
@@ -134,15 +138,48 @@ public:
 			std::cout << std::format("        sbrk count:           {}\n", xalloc::monotonicBrk::get_brk_count());
 			std::cout << std::format("        split count:           {}\n", xalloc::monotonicBrk::get_split_count());
 			std::cout << std::format("        coalesce count:        {}\n", xalloc::monotonicBrk::get_coalesce_count());
+
+			std::cout << std::format("   [{}]: \n", "CLASS");
+			std::cout << std::format("        Count:          \n");
+			for (int i = 0; i < classes.size(); i++) {
+				if (i == classes.size() - 1) {
+					std::cout << std::format("              [{}>]:                  {}\n", (base_class_size * (1 << i-1)), classes[i]);
+					continue;
+				}
+				std::cout << std::format("              [<{}]:                 {}\n", (base_class_size * (1 << i)), classes[i]);
+			}
 		}
 
+		for (void* p : live) {
+			if (p) freefn(p);
+		}
+	}
+
+	void test_alignment(size_t size) {
+		xalloc::monotonicBrk::set_aligned(size);
+		int misaligned_count = 0;
+		std::mt19937_64 rng(SEED);
+		std::uniform_int_distribution<size_t> alloc_size(1, 4096);
+		int total_itr = 5'000;
+
+		for (int i = 0; i < total_itr; i++) {
+			size_t size = alloc_size(rng);
+			void* mem = xalloc::monotonicBrk::alloc(size);
+			if (reinterpret_cast<uintptr_t>(mem) % 16 != 0) {  // for 16-byte alignment check
+				misaligned_count++;
+			}
+			xalloc::monotonicBrk::free(mem);
+		}
+
+		std::cout << std::format("Alignment Test: {} misaligned allocations out of {} ({}%)\n", misaligned_count, total_itr, (double)misaligned_count / total_itr * 100);
 	}
 };
 
 int main() {
-	xalloc::monotonicBrk::test_metadata(64);
+	xalloc::monotonicBrk::test_metadata(128);
 
 	MonotonicSbrkBench mbb;
+	mbb.test_alignment(16);
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
 
 	mbb.run_workload("Monotonic sbrk alloc", ops, xalloc::monotonicBrk::alloc, xalloc::monotonicBrk::free, true);
