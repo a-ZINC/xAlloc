@@ -16,4 +16,14 @@ if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET Benchmark PROPERTY CXX_STANDARD 20)
 endif()
 
+option(ENABLE_ASAN "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
+if (ENABLE_ASAN)
+  set(SANITIZE_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+  foreach(TARGET XallocLib Benchmark)
+    target_compile_options(${TARGET} PRIVATE ${SANITIZE_FLAGS})
+    target_link_options(${TARGET} PRIVATE ${SANITIZE_FLAGS})
+  endforeach()
+endif()
+
 # TODO: Add tests and install targets if needed.

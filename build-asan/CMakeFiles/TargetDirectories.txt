@@ -1,0 +1,6 @@
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/CMakeFiles/edit_cache.dir
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/CMakeFiles/rebuild_cache.dir
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/Xalloc/CMakeFiles/XallocLib.dir
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/Xalloc/CMakeFiles/Benchmark.dir
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/Xalloc/CMakeFiles/edit_cache.dir
+/mnt/c/Users/ajink/source/repos/Xalloc/build-asan/Xalloc/CMakeFiles/rebuild_cache.dir
