@@ -183,6 +183,7 @@ int main() {
 	std::vector<Op> ops = mbb.generate_workload(ITR, SEED);
 
 	mbb.run_workload("Monotonic sbrk alloc", ops, xalloc::monotonicBrk::alloc, xalloc::monotonicBrk::free, true);
+	mbb.run_workload("Arena alloc", ops, xalloc::arena::alloc, xalloc::arena::free, true);
 	mbb.run_workload("Standard malloc", ops, [](size_t size) {return std::malloc(size);}, [](void* mem) {return std::free(mem);}, false);
 	return 0;
 }

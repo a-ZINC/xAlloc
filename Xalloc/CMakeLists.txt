@@ -5,7 +5,7 @@
 # Add source to this project's executable.
 include_directories(include)
 
-add_library(XallocLib src/MonotonicBrk.cpp include/Xalloc.h)
+add_library(XallocLib src/Arena.cpp src/MonotonicBrk.cpp include/Xalloc.h)
 
 add_executable(Benchmark test/Benchmark.cpp)
 
