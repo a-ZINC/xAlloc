@@ -370,3 +370,7 @@ cmake_install.cmake
 CTestTestfile.cmake
 DartConfiguration.tcl
 .cmake/
+.vs/
+out/
+CMakeSettings.json.user
+CMakePresets.json.user

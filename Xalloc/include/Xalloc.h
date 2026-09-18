@@ -26,4 +26,9 @@ namespace xalloc {
 		void stats_external_fragmentation(long& count, double& avg_size);
 		void stats_class_based(std::vector<long>& classes);
 	}
+
+	namespace arena {
+		void* alloc(size_t size);
+		void free(void* addr);
+	}
 }
